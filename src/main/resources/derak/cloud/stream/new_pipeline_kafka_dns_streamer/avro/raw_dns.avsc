@@ -1,0 +1,9 @@
+{
+  "type": "record",
+  "namespace": "derak.cloud.stream.new_pipeline_kafka_dns_streamer.avro",
+  "name": "RawDnsLog",
+  "fields": [
+    { "name": "log", "type": "string", "doc": "raw log" },
+    { "name": "timestamp", "type": "long" , "doc": "Time of ingest"}
+  ]
+}

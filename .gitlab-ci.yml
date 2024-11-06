@@ -1,0 +1,75 @@
+image: docker/compose:1.29.2
+
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  GIT_SUBMODULE_STRATEGY: recursive
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  TAR_FILE: derak-dns-streamer.tar.gz
+  LIST_PORTS: 22154 22155 22156 22157 22158 22159
+
+services:
+  - name: docker:dind
+    command: ["--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock"]
+
+stages:
+  - build
+  - deploy
+
+build-job:
+  stage: build
+  environment:
+    name: production
+  only:
+    - master
+  before_script:
+    - apk add --no-cache bash curl
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+
+  script:
+    - docker build -t $IMAGE_TAG .
+    - docker image ls
+    - echo "Compile complete."
+    - echo "Logging in to GitLab Container Registry..."
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - echo "Pushing the Docker image..."
+    - docker image ls
+    - docker push $IMAGE_TAG
+  tags:
+    - prod
+
+deploy-job:
+  stage: deploy
+  before_script:
+    - apk add --no-cache openssh
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - > /dev/null
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+
+  script:
+    - unset DOCKER_HOST
+    - echo "Deploying application..."
+    - docker ps -a
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+    - apk add --no-cache openssh
+    - docker pull $IMAGE_TAG
+    - docker save $IMAGE_TAG | gzip > $TAR_FILE
+    - for port in $LIST_PORTS; do
+        scp -P $port $TAR_FILE root@185.24.252.43:/root/;
+      done
+    - |
+      for port in $LIST_PORTS; do
+        ssh -p $port root@185.24.252.43 "
+           docker load < /root/$TAR_FILE
+           source /app/.p3/bin/activate
+           cd /app/streamers/dns
+           docker-compose up -d
+           docker-compose ps -a
+        "
+      done
+    - echo "Application successfully deployed."
+  tags:
+    - iran
